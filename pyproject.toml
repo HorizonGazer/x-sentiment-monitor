@@ -1,0 +1,28 @@
+[project]
+name = "weex-sentinel"
+version = "3.0.0"
+description = "WEEX Sentinel — Crypto Sentiment Intelligence Platform"
+requires-python = ">=3.12"
+
+dependencies = [
+    "playwright>=1.48",
+    "httpx>=0.27",
+    "vaderSentiment>=3.3",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.backends._legacy:_Backend"
