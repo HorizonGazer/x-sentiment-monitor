@@ -11,9 +11,9 @@ metadata:
 
 ## 一句话安装
 
-```bash
-git clone https://github.com/HorizonGazer/x-sentiment-monitor ~/.claude/skills/x-sentiment-monitor && cd ~/.claude/skills/x-sentiment-monitor && pip install -e . && playwright install firefox && npm i -g mcporter && mcporter config add exa https://mcp.exa.ai/mcp
-```
+对 Claude Code 说：
+
+> 帮我安装 x-sentiment-monitor skill，仓库地址 https://github.com/HorizonGazer/x-sentiment-monitor ，克隆到 ~/.claude/skills/x-sentiment-monitor，然后安装 Python 依赖（pip install -e .）、Playwright Firefox（playwright install firefox）、mcporter（npm i -g mcporter）并配置 Exa（mcporter config add exa https://mcp.exa.ai/mcp）。
 
 安装后重启 Claude Code 即可自动识别。
 
