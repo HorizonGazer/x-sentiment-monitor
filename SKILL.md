@@ -1,9 +1,35 @@
 ---
 name: x-sentiment-monitor
 description: "WEEX Sentinel — 加密货币舆情采集与AI情报报告生成。触发词: crypto sentiment, 舆情, 日报, market intelligence, 情感分析, WEEX推文, 加密货币情报, daily report, sentiment analysis, 市场分析, X sentiment"
+metadata:
+  version: "3.0.0"
+  author: HorizonGazer
+  homepage: https://github.com/HorizonGazer/x-sentiment-monitor
 ---
 
 # WEEX Sentinel — Claude Code Skill
+
+## 一句话安装
+
+```bash
+git clone https://github.com/HorizonGazer/x-sentiment-monitor ~/.claude/skills/x-sentiment-monitor && cd ~/.claude/skills/x-sentiment-monitor && pip install -e . && playwright install firefox && npm i -g mcporter && mcporter config add exa https://mcp.exa.ai/mcp
+```
+
+安装后重启 Claude Code 即可自动识别。
+
+### 前置条件
+
+| 依赖 | 用途 | 版本 |
+|------|------|------|
+| Python 3.12+ | 运行采集脚本 | `python --version` |
+| Node.js | 运行 mcporter | `node --version` |
+| Firefox | 提供 X/Twitter 登录 Cookie | 系统安装 |
+
+### 安装后配置（必做）
+
+**X/Twitter Cookie**：在 Firefox 中登录 X/Twitter，保持"记住我"勾选。系统自动读取 Firefox 本地 Cookie（`auth_token` + `ct0`）。
+
+**依赖的 Skill**：需要 [weex-trader](https://github.com/HorizonGazer/weex-trader-skill) 获取实时行情。
 
 ## 你是什么
 
@@ -15,10 +41,12 @@ description: "WEEX Sentinel — 加密货币舆情采集与AI情报报告生成�
 
 ## 工作流程
 
+**SKILL_DIR** = 本 skill 的安装目录（`~/.claude/skills/x-sentiment-monitor`）
+
 ### Step 1: 采集数据
 
 ```bash
-cd D:/download/x/x-sentiment-monitor
+cd ~/.claude/skills/x-sentiment-monitor
 python scripts/collect_data.py
 ```
 
@@ -85,7 +113,7 @@ bash $S/crypto.sh fear
 ## 项目文件
 
 ```
-D:/download/x/x-sentiment-monitor/
+x-sentiment-monitor/
 ├── scripts/collect_data.py       # 运行这个采集数据
 ├── src/collectors/x_twitter.py   # X/Twitter 采集器（Playwright + Firefox Cookie）
 ├── src/collectors/exa_search.py  # Exa 搜索（mcporter MCP，免费无 API Key）
@@ -103,10 +131,6 @@ D:/download/x/x_sentiment_logs/<date>/
 ├── <time>_summary.json  # 聚合统计
 └── ai_report.md         # 你撰写的报告
 ```
-
-## 依赖的其他 Skill
-
-- **weex-trader** — 实时行情和恐惧贪婪指数（必须）
 
 ## 注意事项
 

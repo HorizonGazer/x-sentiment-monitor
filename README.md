@@ -4,6 +4,16 @@
 
 从 X/Twitter 和权威财经媒体自动采集数据，经 VADER 情感分析后，由 Claude AI 生成商业级市场情报日报。
 
+## 一句话安装（Claude Code Skill）
+
+```bash
+git clone https://github.com/HorizonGazer/x-sentiment-monitor ~/.claude/skills/x-sentiment-monitor && cd ~/.claude/skills/x-sentiment-monitor && pip install -e . && playwright install firefox && npm i -g mcporter && mcporter config add exa https://mcp.exa.ai/mcp
+```
+
+安装后重启 Claude Code，Skill 自动识别。触发词：`舆情`、`日报`、`crypto sentiment`、`market intelligence`。
+
+> 也可以安装到任意目录作为独立项目使用，不限于 Claude Code Skill。
+
 ## 架构
 
 ```
@@ -11,6 +21,7 @@
 │  Step 1: python scripts/collect_data.py             │
 │                                                     │
 │  X/Twitter (Playwright)  +  Exa (mcporter MCP)      │
+│        ~30 条                   ~60 条               │
 │             ↓                     ↓                  │
 │           VADER 情感分析 (120+ 加密术语)              │
 │                     ↓                                │
@@ -26,29 +37,22 @@
 
 ## 前置条件
 
-| 依赖         | 说明                       | 安装方式                   |
-| ------------ | -------------------------- | -------------------------- |
-| Python 3.12+ | 运行环境                   | https://python.org         |
-| Firefox      | 提供 X/Twitter 登录 Cookie | 系统安装                   |
-| Node.js      | 运行 mcporter              | https://nodejs.org         |
-| mcporter     | Exa MCP 命令行客户端       | `npm i -g mcporter`      |
-| Playwright   | 浏览器自动化               | `pip install playwright` |
+| 依赖 | 说明 | 版本要求 |
+|------|------|----------|
+| Python | 运行采集脚本 | 3.12+ |
+| Firefox | 提供 X/Twitter 登录 Cookie | 任意版本 |
+| Node.js | 运行 mcporter MCP 客户端 | 18+ |
 
-## 安装
+## 分步安装（如不用一句话命令）
 
 ```bash
-git clone https://github.com/Panniantong/x-sentiment-monitor.git
+git clone https://github.com/HorizonGazer/x-sentiment-monitor.git
 cd x-sentiment-monitor
 
-# 安装 Python 依赖
-pip install -e .
-
-# 安装 Playwright Firefox 引擎
-playwright install firefox
-
-# 配置 Exa MCP 搜索
-npm install -g mcporter
-mcporter config add exa https://mcp.exa.ai/mcp
+pip install -e .              # 3 个依赖：playwright, httpx, vaderSentiment
+playwright install firefox    # Playwright Firefox 引擎
+npm i -g mcporter             # Exa MCP 命令行客户端
+mcporter config add exa https://mcp.exa.ai/mcp   # 配置 Exa 搜索源
 ```
 
 ## 配置
