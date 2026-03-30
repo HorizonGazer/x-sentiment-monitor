@@ -36,7 +36,7 @@ from src.sentiment.vader_crypto import create_crypto_vader
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 logger = logging.getLogger(__name__)
 
-LOG_ROOT = Path("D:/download/x/x_sentiment_logs")
+LOG_ROOT = Path(os.environ.get("SENTINEL_LOG_ROOT", "D:/download/x/x_sentiment_logs"))
 
 EVENT_CATEGORIES = {
     "爆仓": ["liquidat", "爆仓", "强平", "清算", "rekt", "margin call", "wipeout"],

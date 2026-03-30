@@ -20,6 +20,7 @@ from typing import Any
 from urllib.parse import quote
 
 from playwright.sync_api import Browser, BrowserContext, Page, ViewportSize
+from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
@@ -388,15 +389,24 @@ class XTwitterCollector:
         ctx.add_cookies(cookies)  # type: ignore[arg-type]
         return ctx
 
-    def _scroll_collect(self, page: Page, limit: int) -> list[_TweetRaw]:
+    def _scroll_collect(self, page: Page, limit: int, max_iterations: int = 30) -> list[_TweetRaw]:
         tweets: list[_TweetRaw] = []
         seen: set[str] = set()
         stable = 0
         last_count = -1
+        iterations = 0
 
-        while len(tweets) < limit and stable < 4:
+        while len(tweets) < limit and stable < 4 and iterations < max_iterations:
+            iterations += 1
             page.wait_for_timeout(800)
-            raw_list: list[dict[str, Any]] = page.evaluate(BATCH_ARTICLES_JS)
+            try:
+                raw_list: list[dict[str, Any]] = page.evaluate(BATCH_ARTICLES_JS)
+            except Exception as e:
+                logger.warning("JS evaluate failed on iteration %d: %s", iterations, e)
+                break
+            if not raw_list:
+                stable += 1
+                continue
             for raw in raw_list:
                 t = _raw_to_tweet(raw)
                 if not t or t.tweet_id in seen:
@@ -413,6 +423,8 @@ class XTwitterCollector:
                 stable = 0
                 last_count = len(raw_list)
             page.mouse.wheel(0, 2500)
+        if iterations >= max_iterations:
+            logger.warning("Scroll loop hit max iterations (%d), collected %d tweets", max_iterations, len(tweets))
 
         if tweets:
             self._last_tweet_id = tweets[-1].tweet_id
@@ -437,8 +449,8 @@ class XTwitterCollector:
                 if t.tweet_id not in seen_ids:
                     seen_ids.add(t.tweet_id)
                     all_tweets.append(t)
-        except PlaywrightTimeoutError:
-            logger.warning("Timeout on Top search for %r", query)
+        except PlaywrightError as e:
+            logger.warning("Playwright error on Top search for %r: %s", query, e)
         finally:
             page.close()
 
@@ -457,8 +469,8 @@ class XTwitterCollector:
                     if t.tweet_id not in seen_ids:
                         seen_ids.add(t.tweet_id)
                         all_tweets.append(t)
-            except PlaywrightTimeoutError:
-                logger.warning("Timeout on Latest search for %r", query)
+            except PlaywrightError as e:
+                logger.warning("Playwright error on Latest search for %r: %s", query, e)
             finally:
                 page2.close()
 
@@ -496,8 +508,8 @@ class XTwitterCollector:
                             if t.tweet_id not in seen_ids:
                                 seen_ids.add(t.tweet_id)
                                 all_tweets.append(t)
-                    except PlaywrightTimeoutError:
-                        logger.warning("Timeout collecting trending query %r", q)
+                    except PlaywrightError as e:
+                        logger.warning("Playwright error collecting trending query %r: %s", q, e)
                     finally:
                         page.close()
             finally:

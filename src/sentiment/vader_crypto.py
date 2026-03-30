@@ -312,7 +312,13 @@ CRYPTO_LEXICON: dict[str, float] = {
 }
 
 
+_cached_analyzer: SentimentIntensityAnalyzer | None = None
+
+
 def create_crypto_vader() -> SentimentIntensityAnalyzer:
+    global _cached_analyzer
+    if _cached_analyzer is not None:
+        return _cached_analyzer
     try:
         from vaderSentiment.vaderSentiment import SentimentIntensityAnalyzer
     except ImportError as exc:
@@ -322,4 +328,5 @@ def create_crypto_vader() -> SentimentIntensityAnalyzer:
 
     analyzer = SentimentIntensityAnalyzer()
     analyzer.lexicon.update(CRYPTO_LEXICON)
+    _cached_analyzer = analyzer
     return analyzer
