@@ -221,10 +221,20 @@ def _find_firefox_profile() -> Path | None:
         base = Path.home() / ".mozilla" / "firefox"
     if not base.exists():
         return None
-    for p in sorted(base.iterdir(), reverse=True):
-        if p.is_dir() and "default" in p.name and (p / "cookies.sqlite").exists():
-            return p
-    return None
+
+    # Prefer "default-release" (actual browsing profile) over "default-default"
+    candidates: list[Path] = []
+    for p in base.iterdir():
+        if p.is_dir() and (p / "cookies.sqlite").exists():
+            candidates.append(p)
+
+    # Priority: 1) default-release  2) any profile with x.com cookies  3) first default
+    for priority_tag in ("default-release", "default"):
+        for p in candidates:
+            if priority_tag in p.name:
+                return p
+
+    return candidates[0] if candidates else None
 
 
 def _extract_firefox_cookies(profile_dir: Path) -> list[dict[str, Any]]:
