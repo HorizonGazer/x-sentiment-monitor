@@ -124,7 +124,7 @@ def sentiment_emoji(compound):
     return "强烈看跌"
 
 
-def _mention_to_dict(m, compound):
+def _mention_to_dict(m, compound, category):
     return {
         "platform": m.platform,
         "source_id": m.source_id,
@@ -140,7 +140,7 @@ def _mention_to_dict(m, compound):
         "tags": m.tags,
         "sentiment_score": round(compound, 4),
         "sentiment_label": sentiment_emoji(compound),
-        "category": classify_event(m.content),
+        "category": category,
     }
 
 
@@ -157,7 +157,7 @@ def analyze_and_summarize(all_mentions):
         engagement = m.upvotes * 3 + m.reposts * 2 + m.replies
         category = classify_event(m.content)
 
-        entry = _mention_to_dict(m, compound)
+        entry = _mention_to_dict(m, compound, category)
         entry["engagement"] = engagement
         results.append(entry)
 
@@ -229,6 +229,153 @@ def analyze_and_summarize(all_mentions):
     return results, summary
 
 
+# ---------------------------------------------------------------------------
+#  Post-processing: deduplication + spam filtering
+# ---------------------------------------------------------------------------
+
+# Language path prefixes commonly used by crypto news sites for translated versions
+_LANG_PREFIX_RE = re.compile(
+    r"^(https?://[^/]+)/(?:nl|fr|pl|es|zh|sl|et|it|uk)(/.*)",
+    re.IGNORECASE,
+)
+
+# Domains known to publish multi-language mirrors under /<lang>/ paths
+_MULTILANG_DOMAINS = {
+    "bitcoin.com", "www.bitcoin.com",
+    "coindesk.com", "www.coindesk.com",
+    "cointelegraph.com", "www.cointelegraph.com",
+    "decrypt.co", "www.decrypt.co",
+    "beincrypto.com", "www.beincrypto.com",
+}
+
+# Spam keyword patterns (case-insensitive)
+_SPAM_KEYWORDS = re.compile(
+    r"\b(?:airdrop|claim\s+(?:your|now|free)|drop\s+your\s+wallet|fcfs"
+    r"|giveaway|whitelist\s+spot|free\s+tokens?)\b",
+    re.IGNORECASE,
+)
+
+# Engagement-farming step patterns ("step 1 ... step 2 ..." with wallet/airdrop language)
+_STEP_PATTERN = re.compile(
+    r"step\s*[12].*(?:wallet|airdrop|follow|retweet|rt\b)",
+    re.IGNORECASE | re.DOTALL,
+)
+_FOLLOW_RT_PATTERN = re.compile(
+    r"follow\s*[\+\&]\s*(?:retweet|rt\b)",
+    re.IGNORECASE,
+)
+
+# Authority news sources whose airdrop coverage should NOT be filtered
+_AUTHORITY_SOURCES = {
+    "cointelegraph", "coindesk", "theblock", "decrypt", "beincrypto",
+    "bitcoinmagazine", "bloomberg", "reuters", "coinpost", "blockworks",
+    "thedefiant", "dlnews",
+}
+
+
+def _normalize_exa_url(url: str) -> str:
+    """Strip language path prefix from known multi-language news domains."""
+    if not url:
+        return url
+    m = _LANG_PREFIX_RE.match(url)
+    if m:
+        from urllib.parse import urlparse
+        domain = urlparse(url).hostname or ""
+        if domain in _MULTILANG_DOMAINS:
+            return m.group(1) + m.group(2)
+    # Also strip trailing slashes for more reliable dedup
+    return url.rstrip("/")
+
+
+def _is_authority_source(entry: dict) -> bool:
+    """Check if the entry is from a trusted news source."""
+    author = (entry.get("author") or "").lower().replace(" ", "")
+    url = (entry.get("url") or "").lower()
+    for src in _AUTHORITY_SOURCES:
+        if src in author or src in url:
+            return True
+    return False
+
+
+def _is_spam_tweet(entry: dict) -> bool:
+    """Return True if the tweet looks like airdrop/engagement-farming spam."""
+    content = entry.get("content", "")
+    if _SPAM_KEYWORDS.search(content):
+        return True
+    if _FOLLOW_RT_PATTERN.search(content):
+        return True
+    if _STEP_PATTERN.search(content):
+        return True
+    return False
+
+
+def post_process(results: list) -> tuple:
+    """
+    Post-process analyzed results:
+      1. Deduplicate multi-language Exa/news articles (keep English / first seen)
+      2. Deduplicate exact same tweet URLs from X
+      3. Remove spam tweets (airdrop bots, engagement farming)
+
+    Returns:
+      (filtered_results, filter_stats)  where filter_stats is a dict
+    """
+    before_count = len(results)
+    dedup_removed = 0
+    spam_removed = 0
+
+    # --- Pass 1: Deduplication ---------------------------------------------------
+    seen_urls = {}          # normalized_url -> index of kept entry
+    kept = []
+
+    for entry in results:
+        url = entry.get("url") or ""
+        platform = entry.get("platform", "")
+
+        if platform in ("exa", "news"):
+            norm = _normalize_exa_url(url)
+        else:
+            # X/Twitter: exact URL dedup (strip trailing slash only)
+            norm = url.rstrip("/") if url else ""
+
+        if norm and norm in seen_urls:
+            dedup_removed += 1
+            continue
+
+        if norm:
+            seen_urls[norm] = len(kept)
+        kept.append(entry)
+
+    # --- Pass 2: Spam filtering (X/Twitter only) ---------------------------------
+    final = []
+    for entry in kept:
+        platform = entry.get("platform", "")
+        if platform == "x":
+            if _is_spam_tweet(entry) and not _is_authority_source(entry):
+                spam_removed += 1
+                continue
+        final.append(entry)
+
+    after_count = len(final)
+    filter_stats = {
+        "before_total": before_count,
+        "after_total": after_count,
+        "removed_total": before_count - after_count,
+        "dedup_removed": dedup_removed,
+        "spam_removed": spam_removed,
+        "details": (
+            f"Removed {dedup_removed} duplicate articles (multi-lang mirrors / same tweet URL) "
+            f"and {spam_removed} spam tweets (airdrop bots / engagement farming)"
+        ),
+    }
+
+    logger.info(
+        "Post-processing: %d → %d  (dedup -%d, spam -%d)",
+        before_count, after_count, dedup_removed, spam_removed,
+    )
+
+    return final, filter_stats
+
+
 def main():
     import argparse
     parser = argparse.ArgumentParser()
@@ -243,24 +390,68 @@ def main():
 
     if args.from_raw:
         logger.info("Loading from existing raw JSON: %s", args.from_raw)
-        # For --from-raw, we'd need to reconstruct RawMention objects
-        # For now, just print a message
-        logger.info("Use the raw JSON directly with Claude for analysis.")
+        raw_data = json.loads(Path(args.from_raw).read_text(encoding="utf-8"))
+        logger.info("Loaded %d entries from raw JSON", len(raw_data))
+        filtered, filter_stats = post_process(raw_data)
+        analyzer = create_crypto_vader()
+        symbol_scores = defaultdict(list)
+        category_items = defaultdict(list)
+        for entry in filtered:
+            compound = entry.get("sentiment_score", 0)
+            sym = entry.get("symbol", "UNKNOWN")
+            cat = entry.get("category", "市场动态")
+            symbol_scores[sym].append(compound)
+            category_items[cat].append(entry)
+        symbol_avg = {}
+        for sym, vals in symbol_scores.items():
+            symbol_avg[sym] = {
+                "avg": round(sum(vals) / len(vals), 4),
+                "count": len(vals),
+                "bullish": sum(1 for v in vals if v > 0.05),
+                "bearish": sum(1 for v in vals if v < -0.05),
+                "neutral": sum(1 for v in vals if -0.05 <= v <= 0.05),
+            }
+        all_sentiments = [e.get("sentiment_score", 0) for e in filtered]
+        overall_avg = sum(all_sentiments) / len(all_sentiments) if all_sentiments else 0
+        bullish_pct = sum(1 for s in all_sentiments if s > 0.05) / len(all_sentiments) * 100 if all_sentiments else 0
+        bearish_pct = sum(1 for s in all_sentiments if s < -0.05) / len(all_sentiments) * 100 if all_sentiments else 0
+        summary = {
+            "generated_at": datetime.now().isoformat(),
+            "regenerated_from": args.from_raw,
+            "stats": {
+                "total_mentions": len(filtered),
+                "x_count": sum(1 for e in filtered if e.get("platform") == "x"),
+                "exa_count": sum(1 for e in filtered if e.get("platform") in ("exa", "news")),
+                "overall_sentiment_avg": round(overall_avg, 4),
+                "bullish_pct": round(bullish_pct, 1),
+                "bearish_pct": round(bearish_pct, 1),
+                "neutral_pct": round(100 - bullish_pct - bearish_pct, 1),
+            },
+            "symbol_breakdown": symbol_avg,
+            "filtered": filter_stats,
+        }
+        summary_path = out_dir / f"{time_str}_summary.json"
+        summary_path.write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+        print(f"\n✅ Summary regenerated: {summary_path}")
         return
 
     logger.info("=== WEEX Sentinel Data Collector ===")
 
-    logger.info("Step 1/3: Collecting data...")
+    logger.info("Step 1/4: Collecting data...")
     all_mentions = collect_all_mentions()
     if not all_mentions:
         logger.error("No mentions collected. Exiting.")
         sys.exit(1)
     logger.info("Total mentions collected: %d", len(all_mentions))
 
-    logger.info("Step 2/3: Analyzing sentiment & generating summary...")
+    logger.info("Step 2/4: Analyzing sentiment & generating summary...")
     results, summary = analyze_and_summarize(all_mentions)
 
-    logger.info("Step 3/3: Saving files...")
+    logger.info("Step 3/4: Post-processing (dedup + spam filter)...")
+    results, filter_stats = post_process(results)
+    summary["filtered"] = filter_stats
+
+    logger.info("Step 4/4: Saving files...")
 
     raw_path = out_dir / f"{time_str}_raw.json"
     raw_path.write_text(json.dumps(results, ensure_ascii=False, indent=2), encoding="utf-8")

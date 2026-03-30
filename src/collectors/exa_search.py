@@ -99,7 +99,6 @@ def _mcporter_call(tool_call: str, timeout: int = 30) -> str | None:
             encoding="utf-8",
             errors="replace",
             timeout=timeout,
-            shell=True,
             cwd=MCPORTER_CWD,
         )
         if r.returncode == 0 and r.stdout.strip():
