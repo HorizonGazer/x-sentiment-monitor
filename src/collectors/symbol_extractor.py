@@ -38,8 +38,8 @@ CRYPTO_SYMBOLS = {
 }
 
 STOCK_SYMBOLS = {
-    "MSTR": ["mstr", "$mstr", "microstrategy"],
-    "COIN": ["$coin", "coinbase"],
+    "MSTR": ["mstr", "microstrategy", "strategy"],
+    "COIN": ["coinbase", "$coin"],
     "MARA": ["mara", "marathon digital"],
     "RIOT": ["riot", "riot platforms"],
     "HIVE": ["hive digital", "$hive"],

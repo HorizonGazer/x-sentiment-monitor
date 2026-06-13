@@ -20,7 +20,6 @@ from typing import Any
 from urllib.parse import quote
 
 from playwright.sync_api import Browser, BrowserContext, Page, ViewportSize
-from playwright.sync_api import Error as PlaywrightError
 from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 from playwright.sync_api import sync_playwright
 
@@ -120,6 +119,28 @@ class _TweetRaw:
 
 # ── Search query templates ──────────────────────────────────────────────────
 
+# ── KOL定向关注列表 ─ 直接从这些号抓最新推文 ──────────────────────────────
+# 每个 from: 查询拉取该账号的最新推文，保证信源质量
+KOL_ACCOUNTS: list[str] = [
+    # 英文 KOL / 资讯号
+    "from:WatcherGuru",        # 大型快讯号，速度快
+    "from:whale_alert",        # 鲸鱼链上监控
+    "from:lookonchain",        # 链上数据追踪
+    "from:CryptoQuant_Alert",  # 链上分析
+    "from:tier10k",            # 快讯
+    "from:CoinDesk",           # 媒体
+    "from:Cointelegraph",      # 媒体
+    "from:theaboroha",         # 加密分析
+    "from:crypto",             # Crypto.com 官方
+    # 中文 KOL / 资讯号
+    "from:bitaboroha",         # 加密分析
+    "from:CryptoHuaHua",       # 中文加密博主
+    "from:Phyrex_Ni",          # 加密数据分析
+    "from:CryptoChan",         # 加密频道
+    "from:EmberCN",            # 余烬 — 链上巨鲸/加密资讯
+    "from:ai_9684xtpa",        # 加密分析师
+]
+
 CRYPTO_QUERIES: list[str] = [
     "crypto min_faves:200 min_retweets:20",
     "bitcoin OR btc min_faves:300",
@@ -127,7 +148,6 @@ CRYPTO_QUERIES: list[str] = [
     "solana OR sol min_faves:150",
     "加密货币 OR 比特币 min_faves:50",
     "defi min_faves:100",
-    "airdrop min_faves:150",
 ]
 
 STOCK_QUERIES: list[str] = [
@@ -136,6 +156,33 @@ STOCK_QUERIES: list[str] = [
     "$RIOT OR $MARA OR $CLSK min_faves:50",
     "bitcoin mining stocks min_faves:50",
     "crypto stocks min_faves:100",
+]
+
+# ── WEEX official X accounts ────────────────────────────────────────────────
+WEEX_QUERIES: list[str] = [
+    "from:WeexCn",
+    "from:WEEX_Official",
+    "from:weexglobal_ch",
+    "@WeexCn OR @WEEX_Official min_faves:3",
+    "WEEX exchange min_faves:10",
+]
+
+# ── Crypto gossip / drama ───────────────────────────────────────────────────
+GOSSIP_QUERIES: list[str] = [
+    "crypto drama OR crypto gossip OR 币圈八卦 min_faves:50",
+    "crypto scandal OR rug pull OR 跑路 min_faves:100",
+    "crypto meme OR 加密梗 min_faves:100",
+    "KOL OR 大V 加密 OR crypto influencer min_faves:50",
+    "SEC OR 监管 crypto regulation min_faves:100",
+]
+
+# ── Crypto hot topics ───────────────────────────────────────────────────────
+HOT_TOPICS_QUERIES: list[str] = [
+    "crypto trending OR 币圈热点 min_faves:200",
+    "bitcoin halving OR ETF OR 减半 min_faves:200",
+    "memecoin OR meme coin OR PEPE OR DOGE min_faves:150",
+    "airdrop 空投 min_faves:100",
+    "Layer2 OR L2 OR rollup min_faves:100",
 ]
 
 
@@ -353,6 +400,10 @@ class XTwitterCollector:
 
     CRYPTO_QUERIES = CRYPTO_QUERIES
     STOCK_QUERIES = STOCK_QUERIES
+    WEEX_QUERIES = WEEX_QUERIES
+    GOSSIP_QUERIES = GOSSIP_QUERIES
+    HOT_TOPICS_QUERIES = HOT_TOPICS_QUERIES
+    KOL_ACCOUNTS = KOL_ACCOUNTS
 
     def __init__(
         self,
@@ -389,24 +440,15 @@ class XTwitterCollector:
         ctx.add_cookies(cookies)  # type: ignore[arg-type]
         return ctx
 
-    def _scroll_collect(self, page: Page, limit: int, max_iterations: int = 30) -> list[_TweetRaw]:
+    def _scroll_collect(self, page: Page, limit: int) -> list[_TweetRaw]:
         tweets: list[_TweetRaw] = []
         seen: set[str] = set()
         stable = 0
         last_count = -1
-        iterations = 0
 
-        while len(tweets) < limit and stable < 4 and iterations < max_iterations:
-            iterations += 1
+        while len(tweets) < limit and stable < 4:
             page.wait_for_timeout(800)
-            try:
-                raw_list: list[dict[str, Any]] = page.evaluate(BATCH_ARTICLES_JS)
-            except Exception as e:
-                logger.warning("JS evaluate failed on iteration %d: %s", iterations, e)
-                break
-            if not raw_list:
-                stable += 1
-                continue
+            raw_list: list[dict[str, Any]] = page.evaluate(BATCH_ARTICLES_JS)
             for raw in raw_list:
                 t = _raw_to_tweet(raw)
                 if not t or t.tweet_id in seen:
@@ -423,8 +465,6 @@ class XTwitterCollector:
                 stable = 0
                 last_count = len(raw_list)
             page.mouse.wheel(0, 2500)
-        if iterations >= max_iterations:
-            logger.warning("Scroll loop hit max iterations (%d), collected %d tweets", max_iterations, len(tweets))
 
         if tweets:
             self._last_tweet_id = tweets[-1].tweet_id
@@ -449,8 +489,8 @@ class XTwitterCollector:
                 if t.tweet_id not in seen_ids:
                     seen_ids.add(t.tweet_id)
                     all_tweets.append(t)
-        except PlaywrightError as e:
-            logger.warning("Playwright error on Top search for %r: %s", query, e)
+        except PlaywrightTimeoutError:
+            logger.warning("Timeout on Top search for %r", query)
         finally:
             page.close()
 
@@ -469,8 +509,8 @@ class XTwitterCollector:
                     if t.tweet_id not in seen_ids:
                         seen_ids.add(t.tweet_id)
                         all_tweets.append(t)
-            except PlaywrightError as e:
-                logger.warning("Playwright error on Latest search for %r: %s", query, e)
+            except PlaywrightTimeoutError:
+                logger.warning("Timeout on Latest search for %r", query)
             finally:
                 page2.close()
 
@@ -488,8 +528,12 @@ class XTwitterCollector:
         return mentions
 
     def collect_trending(self, limit: int = 100) -> list[RawMention]:
-        queries = self.CRYPTO_QUERIES + self.STOCK_QUERIES
-        per_query = max(limit // len(queries) + 3, 8)
+        # Phase 1: KOL定向抓取（高质量信源优先）
+        # Phase 2: 通用搜索补充
+        queries_phase1 = self.KOL_ACCOUNTS
+        queries_phase2 = self.CRYPTO_QUERIES + self.STOCK_QUERIES
+        per_kol = 5  # 每个KOL拉5条最新推文
+        per_query = max(limit // len(queries_phase2) + 3, 8)
         all_tweets: list[_TweetRaw] = []
         seen_ids: set[str] = set()
 
@@ -497,7 +541,25 @@ class XTwitterCollector:
             browser = p.firefox.launch(headless=self._headless)
             ctx = self._create_context(browser)
             try:
-                for q in queries:
+                # Phase 1: KOL accounts
+                for q in queries_phase1:
+                    page = ctx.new_page()
+                    try:
+                        url = f"https://x.com/search?q={quote(q)}&src=typed_query&f=live"
+                        page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                        page.wait_for_timeout(2500)
+                        batch = self._scroll_collect(page, per_kol)
+                        for t in batch:
+                            if t.tweet_id not in seen_ids:
+                                seen_ids.add(t.tweet_id)
+                                all_tweets.append(t)
+                    except PlaywrightTimeoutError:
+                        logger.warning("Timeout collecting KOL %r", q)
+                    finally:
+                        page.close()
+
+                # Phase 2: General queries
+                for q in queries_phase2:
                     page = ctx.new_page()
                     try:
                         url = f"https://x.com/search?q={quote(q)}&src=typed_query&f=live"
@@ -508,8 +570,8 @@ class XTwitterCollector:
                             if t.tweet_id not in seen_ids:
                                 seen_ids.add(t.tweet_id)
                                 all_tweets.append(t)
-                    except PlaywrightError as e:
-                        logger.warning("Playwright error collecting trending query %r: %s", q, e)
+                    except PlaywrightTimeoutError:
+                        logger.warning("Timeout collecting trending query %r", q)
                     finally:
                         page.close()
             finally:
@@ -546,6 +608,53 @@ class XTwitterCollector:
             finally:
                 browser.close()
         return self._tweets_to_mentions(tweets)
+
+    def _collect_by_queries(
+        self, queries: list[str], limit: int, per_query: int | None = None
+    ) -> list[RawMention]:
+        """Generic helper: run a list of queries and return deduplicated mentions."""
+        pq = per_query or max(limit // len(queries) + 3, 8)
+        all_tweets: list[_TweetRaw] = []
+        seen_ids: set[str] = set()
+
+        with sync_playwright() as p:
+            browser = p.firefox.launch(headless=self._headless)
+            ctx = self._create_context(browser)
+            try:
+                for q in queries:
+                    page = ctx.new_page()
+                    try:
+                        url = f"https://x.com/search?q={quote(q)}&src=typed_query&f=live"
+                        page.goto(url, wait_until="domcontentloaded", timeout=60000)
+                        page.wait_for_timeout(2500)
+                        batch = self._scroll_collect(page, pq)
+                        for t in batch:
+                            if t.tweet_id not in seen_ids:
+                                seen_ids.add(t.tweet_id)
+                                all_tweets.append(t)
+                    except PlaywrightTimeoutError:
+                        logger.warning("Timeout collecting query %r", q)
+                    finally:
+                        page.close()
+            finally:
+                browser.close()
+
+        all_tweets.sort(
+            key=lambda t: t.likes * 3 + t.reposts * 2 + t.replies, reverse=True
+        )
+        return self._tweets_to_mentions(all_tweets[:limit])
+
+    def collect_weex(self, limit: int = 30) -> list[RawMention]:
+        """Collect WEEX official X account tweets and community mentions."""
+        return self._collect_by_queries(self.WEEX_QUERIES, limit)
+
+    def collect_gossip(self, limit: int = 30) -> list[RawMention]:
+        """Collect crypto gossip, drama, and scandal tweets."""
+        return self._collect_by_queries(self.GOSSIP_QUERIES, limit)
+
+    def collect_hot_topics(self, limit: int = 30) -> list[RawMention]:
+        """Collect crypto hot topics and trending tweets."""
+        return self._collect_by_queries(self.HOT_TOPICS_QUERIES, limit)
 
     def health_check(self) -> dict[str, Any]:
         status: dict[str, Any] = {
